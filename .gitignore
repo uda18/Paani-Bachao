@@ -9,3 +9,4 @@ frontend/.env.local
 coverage/
 dist/
 *.tsbuildinfo
+.DS_Store

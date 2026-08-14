@@ -202,3 +202,80 @@ describe("property assessment form", () => {
     expect(screen.getByLabelText(/Soil Type/)).toHaveValue("LOAM");
   });
 });
+describe("roof area from dimensions", () => {
+  it("computes area from decimal length and width", () => {
+    render(<AssessmentPage />);
+
+    fireEvent.click(screen.getByLabelText(/Calculate from length/));
+    fireEvent.change(screen.getByLabelText(/Roof length/i), { target: { value: "10.5" } });
+    fireEvent.change(screen.getByLabelText(/Roof width/i), { target: { value: "6.2" } });
+
+    expect(screen.getByLabelText(/Roof Area/)).toHaveValue(65.1);
+    expect(screen.getByText("10.5 m × 6.2 m = 65.1 m²")).toBeInTheDocument();
+  });
+
+  it("produces no area for zero, negative, or incomplete dimensions", () => {
+    render(<AssessmentPage />);
+    fireEvent.click(screen.getByLabelText(/Calculate from length/));
+
+    fireEvent.change(screen.getByLabelText(/Roof length/i), { target: { value: "-3" } });
+    fireEvent.change(screen.getByLabelText(/Roof width/i), { target: { value: "4" } });
+    expect(screen.getByLabelText(/Roof Area/)).toHaveValue(null);
+
+    fireEvent.change(screen.getByLabelText(/Roof length/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/Roof width/i), { target: { value: "0" } });
+    expect(screen.getByLabelText(/Roof Area/)).toHaveValue(null);
+
+    fireEvent.change(screen.getByLabelText(/Roof width/i), { target: { value: "" } });
+    expect(screen.getByLabelText(/Roof Area/)).toHaveValue(null);
+  });
+
+  it("lets the user correct the computed area before submitting", () => {
+    render(<AssessmentPage />);
+    fireEvent.click(screen.getByLabelText(/Calculate from length/));
+    fireEvent.change(screen.getByLabelText(/Roof length/i), { target: { value: "10" } });
+    fireEvent.change(screen.getByLabelText(/Roof width/i), { target: { value: "5" } });
+
+    const areaField = screen.getByLabelText(/Roof Area/);
+    fireEvent.change(areaField, { target: { value: "49" } });
+    expect(areaField).toHaveValue(49);
+  });
+
+  it("keeps the value when switching from dimensions back to direct entry", () => {
+    render(<AssessmentPage />);
+    fireEvent.click(screen.getByLabelText(/Calculate from length/));
+    fireEvent.change(screen.getByLabelText(/Roof length/i), { target: { value: "10" } });
+    fireEvent.change(screen.getByLabelText(/Roof width/i), { target: { value: "5" } });
+
+    fireEvent.click(screen.getByLabelText(/Enter area directly/));
+    expect(screen.getByLabelText(/Roof Area/)).toHaveValue(50);
+    expect(screen.queryByLabelText(/Roof length/i)).not.toBeInTheDocument();
+  });
+
+  it("submits only roofAreaM2, never length or width, when using dimensions mode", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => successfulResult,
+    }));
+    render(<AssessmentPage />);
+
+    fireEvent.change(screen.getByLabelText(/Location \/ Locality/), { target: { value: "Bengaluru" } });
+    fireEvent.click(screen.getByLabelText(/Calculate from length/));
+    fireEvent.change(screen.getByLabelText(/Roof length/i), { target: { value: "10" } });
+    fireEvent.change(screen.getByLabelText(/Roof width/i), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/Roof Material/), { target: { value: "RCC" } });
+    fireEvent.change(screen.getByLabelText(/Soil Type/), { target: { value: "SANDY_LOAM" } });
+    fireEvent.change(screen.getByLabelText(/Groundwater Depth/), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText(/Available Ground Area/), { target: { value: "15" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Calculate Assessment/ }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/result"));
+
+    const request = vi.mocked(fetch).mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(request.body as string);
+    expect(body.roofAreaM2).toBe(50);
+    expect(body).not.toHaveProperty("roofLength");
+    expect(body).not.toHaveProperty("width");
+  });
+});

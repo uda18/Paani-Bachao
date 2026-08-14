@@ -1,12 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AssessmentInput } from "@/lib/types";
 import { FormField } from "@/components/FormField";
 import { InfoNotice } from "@/components/InfoNotice";
 import { SERVER_SNAPSHOT, useSessionValue } from "@/lib/session";
-
+import { calculateRoofArea, roundForDisplay } from "@/lib/roofArea";
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 function apiErrorMessage(body: unknown): string {
@@ -23,27 +23,51 @@ function apiErrorMessage(body: unknown): string {
 
 export default function AssessmentPage() {
   const router = useRouter();
+  
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const storedInputs = useSessionValue("rainassess-inputs");
   const storedResult = useSessionValue("rainassess-result");
 
-  useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-  }, []);
-
-  let savedInputs: AssessmentInput | null = null;
+  let savedInputsForInit: AssessmentInput | null = null;
   if (storedInputs !== SERVER_SNAPSHOT && storedResult !== SERVER_SNAPSHOT) {
     try {
-      savedInputs = storedInputs
+      savedInputsForInit = storedInputs
         ? JSON.parse(storedInputs)
         : storedResult
           ? JSON.parse(storedResult).inputs
           : null;
     } catch {
-      savedInputs = null;
+      savedInputsForInit = null;
     }
   }
+
+  const [roofAreaMode, setRoofAreaMode] = useState<"direct" | "dimensions">("direct");
+  const [roofLength, setRoofLength] = useState("");
+  const [roofWidth, setRoofWidth] = useState("");
+  const [roofAreaValue, setRoofAreaValue] = useState(
+    savedInputsForInit?.roofAreaM2 ? String(savedInputsForInit.roofAreaM2) : "",
+  );
+
+  const computedArea = useMemo(() => {
+    if (roofLength.trim() === "" || roofWidth.trim() === "") return null;
+    return calculateRoofArea(Number(roofLength), Number(roofWidth));
+  }, [roofLength, roofWidth]);
+
+  function applyDimension(nextLength: string, nextWidth: string) {
+    const area =
+      nextLength.trim() === "" || nextWidth.trim() === ""
+        ? null
+        : calculateRoofArea(Number(nextLength), Number(nextWidth));
+    setRoofAreaValue(area !== null ? String(roundForDisplay(area)) : "");
+  }
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, []);
+
+  
+  const savedInputs = savedInputsForInit;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,8 +134,54 @@ export default function AssessmentPage() {
               <FormField id="location" label="Location / Locality" helper="Resolved to coordinates, then matched against the installed official rainfall dataset." className="field-wide">
                 <input id="location" name="location" type="text" required maxLength={120} defaultValue={savedInputs?.location ?? ""} placeholder="Enter city, district or locality" aria-describedby="location-help" />
               </FormField>
-              <FormField id="roofAreaM2" label="Roof Area" helper="Enter the approximate rooftop catchment area.">
-                <div className="control-with-unit"><input id="roofAreaM2" name="roofAreaM2" type="number" min="0.1" max="100000" step="0.1" required defaultValue={savedInputs?.roofAreaM2 ?? ""} placeholder="Enter roof area in square metres" aria-describedby="roofAreaM2-help" /><span>m²</span></div>
+              <FormField id="roofAreaM2" label="Roof Area" helper="Enter the approximate rooftop catchment area, or calculate it from dimensions." className="field-wide">
+                <div className="roof-area-mode-toggle" role="radiogroup" aria-label="Roof area input method">
+                  <label>
+                    <input type="radio" name="roofAreaMode" checked={roofAreaMode === "direct"} onChange={() => setRoofAreaMode("direct")} />
+                    Enter area directly
+                  </label>
+                  <label>
+                    <input type="radio" name="roofAreaMode" checked={roofAreaMode === "dimensions"} onChange={() => { setRoofAreaMode("dimensions"); applyDimension(roofLength, roofWidth); }} />
+                    Calculate from length × width
+                  </label>
+                </div>
+
+                {roofAreaMode === "dimensions" && (
+                  <div className="roof-dimensions-inputs">
+                    <div className="control-with-unit">
+                      <input type="number" min="0.01" step="0.01" value={roofLength} onChange={(e) => { setRoofLength(e.target.value); applyDimension(e.target.value, roofWidth); }} placeholder="Length" aria-label="Roof length in metres" />
+                      <span>m</span>
+                    </div>
+                    <span aria-hidden="true">×</span>
+                    <div className="control-with-unit">
+                      <input type="number" min="0.01" step="0.01" value={roofWidth} onChange={(e) => { setRoofWidth(e.target.value); applyDimension(roofLength, e.target.value); }} placeholder="Width" aria-label="Roof width in metres" />
+                      <span>m</span>
+                    </div>
+                    {computedArea !== null ? (
+                      <p className="roof-area-formula">{roofLength} m × {roofWidth} m = {roundForDisplay(computedArea)} m²</p>
+                    ) : (roofLength || roofWidth) ? (
+                      <p className="roof-area-formula roof-area-formula-invalid">Enter positive length and width to calculate area.</p>
+                    ) : null}
+                  </div>
+                )}
+
+                <div className="control-with-unit">
+                  <input
+                    id="roofAreaM2"
+                    name="roofAreaM2"
+                    type="number"
+                    min="0.1"
+                    max="100000"
+                    step="0.1"
+                    required
+                    value={roofAreaValue}
+                    onChange={(e) => setRoofAreaValue(e.target.value)}
+                    readOnly={roofAreaMode === "dimensions" && computedArea === null}
+                    placeholder="Enter roof area in square metres"
+                    aria-describedby="roofAreaM2-help"
+                  />
+                  <span>m²</span>
+                </div>
               </FormField>
               <FormField id="roofMaterial" label="Roof Material" helper="Used to look up the configured runoff coefficient.">
                 <select id="roofMaterial" name="roofMaterial" required defaultValue={savedInputs?.roofMaterial ?? ""} aria-describedby="roofMaterial-help">
